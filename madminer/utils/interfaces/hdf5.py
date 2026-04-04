@@ -122,7 +122,7 @@ def load_madminer_settings(file_name: str, include_nuisance_benchmarks: bool) ->
     systematics = OrderedDict()
     for s_name, s_type, s_value, s_scale in zip(syst_names, syst_types, syst_values, syst_scales):
         s_type = SystematicType.from_str(s_type)
-        s_scale = SystematicScale.from_str(s_scale)
+        s_scale = SystematicScale.from_str(s_scale) if s_scale is not None else None
         systematics[s_name] = Systematic(s_name, s_type, s_value, s_scale)
 
     # Build finite differences dictionary
@@ -193,7 +193,7 @@ def save_madminer_settings(
 
     systematics_names = [s.name for s in systematics.values()]
     systematics_types = [s.type.value for s in systematics.values()]
-    systematics_scales = [s.scale.value for s in systematics.values()]
+    systematics_scales = [s.scale.value if s.scale is not None else "None" for s in systematics.values()]
     systematics_values = [s.value for s in systematics.values()]
 
     # Save information within the HDF5 file
@@ -1203,6 +1203,7 @@ def _load_systematics(file_name: str) -> Tuple[List[str], List[str], List[System
         else:
             systematics_names = _decode_strings(systematics_names)
             systematics_types = _decode_strings(systematics_types)
+            systematics_values = _decode_strings(systematics_values)
             systematics_scales = _decode_strings(systematics_scales)
             systematics_scales = [None if scale == EMPTY_EXPR else scale for scale in systematics_scales]
 
