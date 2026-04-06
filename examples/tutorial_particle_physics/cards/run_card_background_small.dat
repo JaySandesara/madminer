@@ -31,7 +31,7 @@
 # If you want to run Pythia, avoid more than 50k events in a run.    *
 #*********************************************************************
   10   = nevents          ! Number of unweighted events requested
-      0   = iseed            ! rnd seed (0=assigned automatically=default))
+      0   = iseed            ! rnd seed (0=assigned automatically=default)
 
 #*********************************************************************
 # Collider type and energy                                           *
@@ -104,10 +104,10 @@
   15.0    = bwcutoff         ! (M+/-bwcutoff*Gamma)
 
 #*********************************************************************
-# Apply pt/E/eta/dr/mij/kt_durham cuts on decay products or not
-# (note that etmiss/ptll/ptheavy/ht/sorted cuts always apply)
+# Apply pt/E/eta/dr/mij/kt_durham cuts on decay products or not      *
+# (note that etmiss/ptll/ptheavy/ht/sorted cuts always apply)        *
 #*********************************************************************
-   False  = cut_decays       ! Cut decay products
+  False   = cut_decays       ! Cut decay products
 
 #*********************************************************************
 # Standard Cuts                                                      *
@@ -124,8 +124,8 @@
   -1.0    = ptamax           ! maximum pt for the photons
   -1.0    = ptlmax           ! maximum pt for the charged leptons
   -1.0    = missetmax        ! maximum missing Et (sum of neutrino's momenta)
-   {}     = pt_min_pdg       ! pt cut for other particles (use pdg code). Applied on particle and anti-particle
-   {}	  = pt_max_pdg       ! pt cut for other particles (syntax e.g. {6: 100, 25: 50})
+    {}    = pt_min_pdg       ! pt cut for other particles (use pdg code). Applied on particle and anti-particle
+    {}	  = pt_max_pdg       ! pt cut for other particles (syntax e.g. {6: 100, 25: 50})
 
 #*********************************************************************
 # Minimum and maximum E's (in the center of mass frame)              *
@@ -134,7 +134,7 @@
    0.0    = eb               ! minimum E for the b
    0.0    = ea               ! minimum E for the photons
    0.0    = el               ! minimum E for the charged leptons
-  -1.0    = ejmax            ! maximum E for the jets
+  -1.0    = ejmax            ! maximum E for the jet
   -1.0    = ebmax            ! maximum E for the b
   -1.0    = eamax            ! maximum E for the photons
   -1.0    = elmax            ! maximum E for the charged leptons

@@ -122,8 +122,8 @@ def plot_uncertainty(
     # Restrict nuisance parameters
     if systematics is not None:
         nuisance_parameters = []
-        for npar, (npar_syst, _, _) in sa.nuisance_parameters.items():
-            if npar_syst in systematics:
+        for npar, npar_obj in sa.nuisance_parameters.items():
+            if npar_obj.systematic in systematics:
                 nuisance_parameters.append(npar)
 
         for i in range(n_nuisance_params):
@@ -357,8 +357,8 @@ def plot_systematics(
     for i_syst, syst_name in enumerate(sa.systematics.keys()):
         n_used = n_nuisance_params
         used_nuisance_parameters = []
-        for npar, (npar_syst, _, _) in sa.nuisance_parameters.items():
-            if npar_syst == syst_name:
+        for npar, npar_obj in sa.nuisance_parameters.items():
+            if npar_obj.systematic == syst_name:
                 used_nuisance_parameters.append(npar)
 
         for i in range(n_nuisance_params):

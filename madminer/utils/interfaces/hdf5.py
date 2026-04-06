@@ -1203,6 +1203,7 @@ def _load_systematics(file_name: str) -> Tuple[List[str], List[str], List[System
         else:
             systematics_names = _decode_strings(systematics_names)
             systematics_types = _decode_strings(systematics_types)
+            systematics_values = _decode_strings(systematics_values)
             systematics_scales = _decode_strings(systematics_scales)
             systematics_scales = [None if scale == EMPTY_EXPR else scale for scale in systematics_scales]
 
