@@ -26,8 +26,13 @@ class Trainer:
         self._timer(start="ALL")
         self._timer(start="initialize model")
         self.model = model
-        self.run_on_gpu = run_on_gpu and torch.cuda.is_available()
-        self.device = torch.device("cuda" if self.run_on_gpu else "cpu")
+        if run_on_gpu and torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif run_on_gpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
+        self.run_on_gpu = self.device.type != "cpu"
         self.dtype = torch.double if double_precision else torch.float
         self.n_workers = n_workers
 
@@ -35,7 +40,7 @@ class Trainer:
 
         logger.info(
             "Training on %s with %s precision",
-            "GPU" if self.run_on_gpu else "CPU",
+            self.device,
             "double" if double_precision else "single",
         )
 

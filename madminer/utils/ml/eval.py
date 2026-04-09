@@ -11,9 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 def evaluate_flow_model(model, thetas=None, xs=None, evaluate_score=False, run_on_gpu=True, double_precision=False):
-    # CPU or GPU?
-    run_on_gpu = run_on_gpu and torch.cuda.is_available()
-    device = torch.device("cuda" if run_on_gpu else "cpu")
+    # CPU, CUDA, or MPS?
+    if run_on_gpu and torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif run_on_gpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    run_on_gpu = device.type != "cpu"
     dtype = torch.double if double_precision else torch.float
 
     # Balance theta0 and theta1
@@ -70,9 +75,14 @@ def evaluate_ratio_model(
     double_precision=False,
     return_grad_x=False,
 ):
-    # CPU or GPU?
-    run_on_gpu = run_on_gpu and torch.cuda.is_available()
-    device = torch.device("cuda" if run_on_gpu else "cpu")
+    # CPU, CUDA, or MPS?
+    if run_on_gpu and torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif run_on_gpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    run_on_gpu = device.type != "cpu"
     dtype = torch.double if double_precision else torch.float
 
     # Figure out method type
@@ -197,9 +207,14 @@ def evaluate_ratio_model(
 
 
 def evaluate_local_score_model(model, xs=None, run_on_gpu=True, double_precision=False, return_grad_x=False):
-    # CPU or GPU?
-    run_on_gpu = run_on_gpu and torch.cuda.is_available()
-    device = torch.device("cuda" if run_on_gpu else "cpu")
+    # CPU, CUDA, or MPS?
+    if run_on_gpu and torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif run_on_gpu and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    run_on_gpu = device.type != "cpu"
     dtype = torch.double if double_precision else torch.float
 
     # Prepare data
