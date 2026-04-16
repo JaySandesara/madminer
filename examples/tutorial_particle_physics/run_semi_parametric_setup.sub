@@ -1,0 +1,50 @@
+# Run semi_parametric_setup.py on HTCondor
+# Submit from the madminer repo root:
+#   condor_submit examples/tutorial_particle_physics/run_semi_parametric_setup.sub
+
+universe = container
+container_image = file:///staging/jsandesara/madminer-jupyter-env.sif
+
+EXAMPLE_DIR = tutorial_particle_physics
+WORK_DIR = examples/$(EXAMPLE_DIR)
+
+executable = $(WORK_DIR)/run_semi_parametric_setup.sh
+
+log    = logs/semi_param_setup.$(Cluster).log
+output = logs/semi_param_setup.$(Cluster).out
+error  = logs/semi_param_setup.$(Cluster).err
+
+request_cpus   = $(CPUS:12)
+request_memory = $(MEM:64GB)
+request_gpus   = $(GPUS:1)
+request_disk   = $(DISK:64GB)
+
+stream_output = True
+stream_error  = True
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+
+requirements = (GPUs_DriverVersion >= 12.4) && (Target.HasCHTCStaging == true) && (Machine != "vetsigian0001.chtc.wisc.edu") && (Machine != "vetsigian0000.chtc.wisc.edu") && (Machine != "gpulab2003.chtc.wisc.edu") && (Machine != "gpulab2001.chtc.wisc.edu")
+
+gpus_minimum_capability = 7.0
+
++WantGPULab = true
++WantFlocking           = true
++is_resumable           = true
++want_campus_pools      = true
++want_ospool            = true
++WantGlidein            = true
+
++GPUJobLength = "short"
+
+transfer_input_files = pyproject.toml, madminer, $(WORK_DIR), README.md
+
+transfer_output_files = $(EXAMPLE_DIR)/logs
+
+transfer_output_remaps = "data         = ./$(WORK_DIR)/data; \
+                          mg_processes = ./$(WORK_DIR)/mg_processes; \
+                          logs          = ./$(WORK_DIR)/logs"
+                          
+
+queue

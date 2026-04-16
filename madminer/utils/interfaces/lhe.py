@@ -20,8 +20,19 @@ from madminer.utils.particle import MadMinerParticle
 from madminer.utils.various import unzip_file
 from madminer.utils.various import approx_equal
 from madminer.utils.various import math_commands
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _cached_standard_ids():
+    return frozenset(get_elementary_pdg_ids())
+
+
+@lru_cache(maxsize=1)
+def _cached_neutrino_ids():
+    return frozenset(int(p.pdgid) for p in Particle.findall(lambda p: p.pdgid.is_sm_lepton and p.charge == 0))
 
 
 def parse_lhe_file(
@@ -641,12 +652,9 @@ def _extract_nuisance_param_dict(weight_groups: list, systematics_name: str, sys
                 continue
             logger.debug("New weight group: %s", wg_name)
 
-            if (
-                "mg_reweighting" in wg_name.lower()
-                or ("mwst" not in wg_name.lower() and "pdf" not in wg_name.lower())
-                or ("ct" not in wg_name.lower() and "mwst" not in wg_name.lower())
-                or systematic.value not in wg_name.lower()
-            ):
+            if "mg_reweighting" in wg_name.lower():
+                continue
+            if "pdf" not in wg_name.lower() and "mwst" not in wg_name.lower():
                 continue
 
             logger.debug("Weight group identified as PDF variation")
@@ -932,8 +940,8 @@ def _get_objects(particles, particles_truth, met_resolution=None, global_event_d
     ht = 0.0
     visible_sum = MadMinerParticle.from_xyzt(0.0, 0.0, 0.0, 0.0)
 
-    standard_ids = set(get_elementary_pdg_ids())
-    neutrino_ids = set(int(p.pdgid) for p in Particle.findall(lambda p: p.pdgid.is_sm_lepton and p.charge == 0))
+    standard_ids = _cached_standard_ids()
+    neutrino_ids = _cached_neutrino_ids()
 
     for particle in particles:
         if particle.pdgid in standard_ids and particle.pdgid not in neutrino_ids:

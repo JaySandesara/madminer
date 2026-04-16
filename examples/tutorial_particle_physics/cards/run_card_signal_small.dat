@@ -46,8 +46,8 @@
 #*********************************************************************
 # PDF CHOICE: this automatically fixes also alpha_s and its evol.    *
 #*********************************************************************
-  nn23lo1 = pdlabel          ! PDF set
-  230000  = lhaid            ! if pdlabel=lhapdf, this is the lhapdf number
+  lhapdf  = pdlabel          ! PDF set (use LHAPDF for systematics --pdf=errorset support)
+  247000  = lhaid            ! NNPDF23_lo_as_0130_qed (101 members: 0=central, 1-100=replicas)
 
 #*********************************************************************
 # Renormalization and factorization scales                           *

@@ -1,6 +1,9 @@
 from .analysis import DataAnalyzer
 from .core import MadMiner
-from .delphes import DelphesReader
+try:
+    from .delphes import DelphesReader
+except ImportError:
+    pass
 from .fisherinformation import FisherInformation
 from .fisherinformation import InformationGeometry
 from .fisherinformation import profile_information
