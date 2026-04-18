@@ -1,6 +1,10 @@
-# Run semi_parametric_setup.py on HTCondor
+# Run semi_parametric_setup.py on HTCondor as a batch of N independent jobs.
 # Submit from the madminer repo root:
 #   condor_submit examples/tutorial_particle_physics/run_semi_parametric_setup.sub
+#
+# Each queued job gets a unique $(Process) (0..N-1). The shell wrapper converts
+# this to BATCH_ID = Process + 1, so you get batches 1..N.
+# Adjust the `queue N` line at the bottom (default: 10).
 
 universe = container
 container_image = file:///staging/jsandesara/madminer-jupyter-env.sif
@@ -9,15 +13,17 @@ EXAMPLE_DIR = tutorial_particle_physics
 WORK_DIR = examples/$(EXAMPLE_DIR)
 
 executable = $(WORK_DIR)/run_semi_parametric_setup.sh
+arguments  = "$(Process)"
 
-log    = logs/semi_param_setup.$(Cluster).log
-output = logs/semi_param_setup.$(Cluster).out
-error  = logs/semi_param_setup.$(Cluster).err
+# Per-process log/out/err so 10 parallel jobs don't overwrite each other
+log    = logs/semi_param_setup.$(Cluster).$(Process).log
+output = logs/semi_param_setup.$(Cluster).$(Process).out
+error  = logs/semi_param_setup.$(Cluster).$(Process).err
 
-request_cpus   = $(CPUS:12)
-request_memory = $(MEM:64GB)
-request_gpus   = $(GPUS:1)
-request_disk   = $(DISK:64GB)
+request_cpus   = $(CPUS:8)
+request_memory = $(MEM:16GB)
+request_gpus   = $(GPUS:0)
+request_disk   = $(DISK:16GB)
 
 stream_output = True
 stream_error  = True
@@ -27,9 +33,9 @@ when_to_transfer_output = ON_EXIT
 
 requirements = (GPUs_DriverVersion >= 12.4) && (Target.HasCHTCStaging == true) && (Machine != "vetsigian0001.chtc.wisc.edu") && (Machine != "vetsigian0000.chtc.wisc.edu") && (Machine != "gpulab2003.chtc.wisc.edu") && (Machine != "gpulab2001.chtc.wisc.edu")
 
-gpus_minimum_capability = 7.0
+gpus_minimum_capability = 5.0
 
-+WantGPULab = true
+#+WantGPULab = true
 +WantFlocking           = true
 +is_resumable           = true
 +want_campus_pools      = true
@@ -40,11 +46,11 @@ gpus_minimum_capability = 7.0
 
 transfer_input_files = pyproject.toml, madminer, $(WORK_DIR), README.md
 
+# Only transfer logs back — mg_processes is intermediate MadGraph data, and
+# HDF5 outputs go directly to /staging/ from inside the job. Per-process log
+# subdirs prevent clashes between concurrently finishing jobs.
 transfer_output_files = $(EXAMPLE_DIR)/logs
 
-transfer_output_remaps = "data         = ./$(WORK_DIR)/data; \
-                          mg_processes = ./$(WORK_DIR)/mg_processes; \
-                          logs          = ./$(WORK_DIR)/logs"
-                          
+transfer_output_remaps = "$(EXAMPLE_DIR)/logs = ./$(WORK_DIR)/logs/proc_$(Process)"
 
-queue
+queue 10

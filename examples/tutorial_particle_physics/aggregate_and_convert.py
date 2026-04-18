@@ -37,6 +37,15 @@ def load_batch(path):
             for key in f["nuisance_weights"]:
                 data["nuisance_weights"][key] = f["nuisance_weights"][key][()]
 
+        # Load dense scale weights (per-event raw muF variation weights)
+        data["scale_weights_dense"] = {}
+        if "scale_weights_dense" in f:
+            for syst_name in f["scale_weights_dense"]:
+                data["scale_weights_dense"][syst_name] = {}
+                for muf_key in f[f"scale_weights_dense/{syst_name}"]:
+                    data["scale_weights_dense"][syst_name][muf_key] = \
+                        f[f"scale_weights_dense/{syst_name}/{muf_key}"][()]
+
         meta = {
             "morphing_matrix": f["morphing_matrix"][()],
             "morphing_components": f["morphing_components"][()],
@@ -110,8 +119,34 @@ def aggregate(input_dir, output_path):
             [d["nuisance_weights"][nk] for d in all_data], axis=0
         )
 
+    # Dense scale weights (aligned with events)
+    combined["scale_weights_dense"] = {}
+    if all_data[0]["scale_weights_dense"]:
+        for syst_name, muf_dict in all_data[0]["scale_weights_dense"].items():
+            combined["scale_weights_dense"][syst_name] = {}
+            for muf_key in muf_dict:
+                combined["scale_weights_dense"][syst_name][muf_key] = np.concatenate(
+                    [d["scale_weights_dense"][syst_name][muf_key] for d in all_data], axis=0
+                )
+
     n_total = combined["observables"].shape[0]
     print(f"\nTotal: {n_total} events")
+
+    # Renormalize weights so the aggregate sum equals the per-batch mean sum.
+    # Each batch's weights are scaled so that sum(weight_sm) ~ sigma(sm) (first physics
+    # benchmark column). Concatenating N batches naively gives sum = N × sigma(sm);
+    # we rescale back to ~sigma(sm).  nuisance_a/b are log-ratios and are left alone.
+    per_batch_sum = np.array([d["weights_benchmarks"][:, 0].sum() for d in all_data])
+    target_sum = per_batch_sum.mean()
+    current_sum = combined["weights_benchmarks"][:, 0].sum()
+    scale = target_sum / current_sum
+    print(f"Renormalizing weights: target_sum={target_sum:.4e}, current_sum={current_sum:.4e}, scale={scale:.4e}")
+    combined["weights_benchmarks"] = combined["weights_benchmarks"] * scale
+    for nk in combined["nuisance_weights"]:
+        combined["nuisance_weights"][nk] = combined["nuisance_weights"][nk] * scale
+    for syst_name, muf_dict in combined["scale_weights_dense"].items():
+        for muf_key in muf_dict:
+            muf_dict[muf_key] = muf_dict[muf_key] * scale
 
     # Shuffle
     rng = np.random.default_rng(42)
@@ -120,6 +155,10 @@ def aggregate(input_dir, output_path):
         if key == "nuisance_weights":
             for nk in combined[key]:
                 combined[key][nk] = combined[key][nk][perm]
+        elif key == "scale_weights_dense":
+            for syst_name, muf_dict in combined[key].items():
+                for muf_key in muf_dict:
+                    muf_dict[muf_key] = muf_dict[muf_key][perm]
         elif combined[key].ndim == 1:
             combined[key] = combined[key][perm]
         elif key in ("nuisance_a", "nuisance_b"):
@@ -134,6 +173,13 @@ def aggregate(input_dir, output_path):
                 grp = f.create_group("nuisance_weights")
                 for nk, nv in arr.items():
                     grp.create_dataset(nk, data=nv)
+            elif key == "scale_weights_dense":
+                if arr:
+                    grp = f.create_group("scale_weights_dense")
+                    for syst_name, muf_dict in arr.items():
+                        sgrp = grp.create_group(syst_name)
+                        for muf_key, w in muf_dict.items():
+                            sgrp.create_dataset(muf_key, data=w)
             else:
                 f.create_dataset(key, data=arr)
         for key, arr in ref_meta.items():
@@ -177,6 +223,15 @@ def convert_to_root(h5_path, root_path):
         if "systematics_names" in f:
             syst_names = [s.decode() for s in f["systematics_names"][()]]
 
+        # Dense scale weights (per-event raw muF variation)
+        dense_weights = {}
+        if "scale_weights_dense" in f:
+            for syst_name in f["scale_weights_dense"]:
+                dense_weights[syst_name] = {}
+                for muf_key in f[f"scale_weights_dense/{syst_name}"]:
+                    dense_weights[syst_name][muf_key] = \
+                        f[f"scale_weights_dense/{syst_name}/{muf_key}"][()]
+
     # -- Events tree --
     event_data = {}
 
@@ -197,6 +252,13 @@ def convert_to_root(h5_path, root_path):
         label = nuis_param_names[i] if i < len(nuis_param_names) else str(i)
         event_data[f"nuisance_a_{label}"] = a_coeffs[i].astype(np.float64)
         event_data[f"nuisance_b_{label}"] = b_coeffs[i].astype(np.float64)
+
+    # Dense scale weights — one branch per (systematic, muF) point
+    for syst_name, muf_dict in dense_weights.items():
+        for muf_key, w in muf_dict.items():
+            # muf_key is like "muf_0.5"; sanitize for ROOT branch name
+            safe = muf_key.replace(".", "p")
+            event_data[f"weight_{syst_name}_{safe}"] = w.astype(np.float64)
 
     # Sampling info
     event_data["sampling_benchmark_id"] = sampling_ids.astype(np.int32)

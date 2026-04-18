@@ -50,8 +50,14 @@ def parse_lhe_file(
     k_factor=1.0,
     parse_events_as_xml=True,
     systematics_dict=None,
+    extra_weight_ids=None,
 ):
-    """Extracts observables and weights from a LHE file"""
+    """Extracts observables and weights from a LHE file.
+
+    If `extra_weight_ids` is a list of LHE weight IDs (strings), those raw per-event
+    weights are also returned in a third dict keyed by weight ID, aligned with the
+    returned observations.
+    """
 
     logger.debug("Parsing LHE file %s", filename)
 
@@ -228,7 +234,7 @@ def parse_lhe_file(
 
     if n_events_pass == 0:
         logger.warning("  No observations remaining!")
-        return None, None
+        return None, None, None
 
     # Reformat observations to OrderedDicts with entries {observable_name : (n_events,)}
     observations_all_events = list(map(list, zip(*observations_all_events)))  # transposes to (n_observables, n_events)
@@ -279,7 +285,16 @@ def parse_lhe_file(
             else:
                 raise RuntimeError(f"Unknown nuisance processing {processing}")
 
-    return observations_dict, output_weights
+    # Extra raw weights (e.g. dense scale variation points) keyed by LHE weight ID
+    extra_weights = OrderedDict()
+    if extra_weight_ids:
+        for wid in extra_weight_ids:
+            if wid in weights_all_events:
+                extra_weights[wid] = weights_all_events[wid]
+            else:
+                logger.warning("Requested extra weight ID %s not found in LHE file %s", wid, filename)
+
+    return observations_dict, output_weights, extra_weights
 
 
 def _report_parse_results(
@@ -503,6 +518,39 @@ def _parse_cuts(cuts, fail_cuts, observables, observations, pass_all_cuts, pass_
     return pass_all_cuts
 
 
+def find_scale_weight_ids(filename: str, muf_values, mur_value=1.0):
+    """Return an OrderedDict mapping muF value -> LHE weight ID at the given muR.
+
+    Looks up the scale variation weight group in the LHE initrwgt header.
+    """
+    initrwgts = _untar_and_parse_lhe_file(filename, ["initrwgt"])
+    weight_groups = []
+    for initrwgt in initrwgts:
+        weight_groups += initrwgt.findall("weightgroup")
+
+    ids = OrderedDict()
+    for wg in weight_groups:
+        wg_name = wg.attrib.get("name", "")
+        if "mg_reweighting" in wg_name.lower() or "scale variation" not in wg_name.lower():
+            continue
+        for weight in wg.findall("weight"):
+            try:
+                wid = str(weight.attrib["id"])
+                wmuf = float(weight.attrib["MUF"])
+                wmur = float(weight.attrib["MUR"])
+            except KeyError:
+                continue
+            if not approx_equal(wmur, mur_value):
+                continue
+            # Skip dynamical scale variants
+            if any(k in weight.attrib for k in ("dynscale", "dyn_scale", "DYNSCALE", "DYN_SCALE")):
+                continue
+            for muf in muf_values:
+                if approx_equal(wmuf, float(muf)) and muf not in ids:
+                    ids[muf] = wid
+    return ids
+
+
 def extract_nuisance_parameters_from_lhe_file(filename: str, systematics: Dict[str, Systematic]):
     """
     Extracts the definition of nuisance parameters from the LHE file
@@ -550,7 +598,9 @@ def _extract_nuisance_param_dict(weight_groups: list, systematics_name: str, sys
     if systematic.type == SystematicType.NORM:
         nuisance_param_name = f"{systematics_name}_nuisance_param_0"
         benchmark_name = f"{nuisance_param_name}_benchmark_0"
-        nuisance_param_definition = (benchmark_name, None), (None, None), systematic.value
+        # value may be a string after HDF5 round-trip; ensure float
+        processing = float(systematic.value)
+        nuisance_param_definition = (benchmark_name, None), (None, None), processing
         return {nuisance_param_name: nuisance_param_definition}
 
     elif systematic.type == SystematicType.SCALE:

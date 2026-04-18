@@ -1,12 +1,14 @@
 #!/bin/bash
 set -e
 
-# echo "=== Running semi_parametric_setup.ipynb ==="
-# echo "Python: $(python3 --version)"
-# echo "Working directory: $(pwd)"
-# echo "Contents: $(ls)"
-# echo "MG_FOLDER_PATH: $MG_FOLDER_PATH"
-# echo ""
+# First arg (if given) is HTCondor's $(Process) — converted to 1-indexed BATCH_ID.
+# Default to 1 when run locally without args.
+if [ -n "${1:-}" ]; then
+    export BATCH_ID=$(($1 + 1))
+else
+    export BATCH_ID=${BATCH_ID:-1}
+fi
+echo "BATCH_ID=$BATCH_ID"
 
 export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
 python3 -m pip install --no-deps --user -e .

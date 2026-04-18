@@ -13,7 +13,10 @@ from madminer.utils.interfaces.hdf5 import save_events
 from madminer.utils.interfaces.hdf5 import save_nuisance_setup
 from madminer.utils.interfaces.lhe import parse_lhe_file
 from madminer.utils.interfaces.lhe import extract_nuisance_parameters_from_lhe_file
+from madminer.utils.interfaces.lhe import find_scale_weight_ids
 from madminer.utils.interfaces.lhe import get_elementary_pdg_ids
+from madminer.models import SystematicType
+from madminer.models import SystematicScale
 from madminer.sampling import combine_and_shuffle
 
 logger = logging.getLogger(__name__)
@@ -88,6 +91,10 @@ class LHEReader:
         self.observations = None
         self.weights = None
         self.events_sampling_benchmark_ids = []
+
+        # Dense scale variation weights (per-event, keyed by systematic then muF value)
+        # Populated during analyse_samples when a "scale" systematic has >2 scale_variations points.
+        self.dense_scale_weights = OrderedDict()
 
         # Initialize event summary
         self.signal_events_per_benchmark = []
@@ -581,6 +588,24 @@ class LHEReader:
         self.events_sampling_benchmark_ids = []
         self.signal_events_per_benchmark = [0 for _ in range(self.n_benchmarks_phys)]
         self.background_events = 0
+        self.dense_scale_weights = OrderedDict()
+
+        # Collect dense muF values per systematic (values from scale_variations, excluding nominal 1.0)
+        dense_muf_by_syst = OrderedDict()
+        for syst_name, syst_obj in self.systematics.items():
+            if syst_obj.type != SystematicType.SCALE:
+                continue
+            if syst_obj.scale != SystematicScale.MUF and syst_obj.scale != SystematicScale.MU:
+                continue
+            try:
+                values = [float(v) for v in syst_obj.value.split(",")]
+            except Exception:
+                continue
+            if len(values) > 2:
+                dense_muf_by_syst[syst_name] = values
+                self.dense_scale_weights[syst_name] = OrderedDict()
+                for muf in values:
+                    self.dense_scale_weights[syst_name][muf] = None
 
         for lhe_file, is_background, sampling_benchmark, k_factor, sample_syst_names in zip(
             self.lhe_sample_filenames,
@@ -599,7 +624,7 @@ class LHEReader:
                 "no systematics" if sample_syst_names is None else "systematics" + ", ".join(list(sample_syst_names)),
             )
 
-            this_observations, this_weights, this_n_events = self._parse_sample(
+            this_observations, this_weights, this_n_events, this_dense = self._parse_sample(
                 is_background,
                 k_factor,
                 lhe_file,
@@ -607,11 +632,21 @@ class LHEReader:
                 reference_benchmark,
                 sampling_benchmark,
                 sample_syst_names,
+                dense_muf_by_syst=dense_muf_by_syst,
             )
 
             # No results?
             if this_observations is None:
                 continue
+
+            # Merge dense scale weights
+            for syst_name, muf_to_weights in this_dense.items():
+                for muf, w in muf_to_weights.items():
+                    existing = self.dense_scale_weights[syst_name].get(muf)
+                    if existing is None:
+                        self.dense_scale_weights[syst_name][muf] = w
+                    else:
+                        self.dense_scale_weights[syst_name][muf] = np.hstack([existing, w])
 
             # Store sampling id for each event
             if is_background:
@@ -680,6 +715,7 @@ class LHEReader:
         reference_benchmark,
         sampling_benchmark,
         sample_syst_names,
+        dense_muf_by_syst=None,
     ):
         # Relevant systematics
         systematics_used = OrderedDict()
@@ -687,6 +723,17 @@ class LHEReader:
             sample_syst_names = []
         for key in sample_syst_names:
             systematics_used[key] = self.systematics[key]
+
+        # Collect extra weight IDs for dense scale variations (non-extreme muF points)
+        extra_weight_ids = []
+        muf_to_wid_by_syst = OrderedDict()
+        if dense_muf_by_syst:
+            for syst_name, muf_values in dense_muf_by_syst.items():
+                if syst_name not in systematics_used:
+                    continue
+                ids = find_scale_weight_ids(lhe_file, muf_values)
+                muf_to_wid_by_syst[syst_name] = ids
+                extra_weight_ids.extend(ids.values())
 
         # Read systematics setup from LHE file
         logger.debug("Extracting nuisance parameter definitions from LHE file")
@@ -721,7 +768,7 @@ class LHEReader:
                 )
 
         # Calculate observables and weights in LHE file
-        this_observations, this_weights = parse_lhe_file(
+        this_observations, this_weights, this_extra = parse_lhe_file(
             filename=lhe_file,
             sampling_benchmark=sampling_benchmark,
             benchmark_names=self.benchmark_names_phys,
@@ -736,12 +783,13 @@ class LHEReader:
             k_factor=k_factor,
             parse_events_as_xml=parse_events_as_xml,
             systematics_dict=systematics_dict,
+            extra_weight_ids=extra_weight_ids,
         )
 
         # No events found?
         if this_observations is None:
             logger.warning("No remaining events in this LHE file, skipping it")
-            return None, None
+            return None, None, None, None
         logger.debug("Found weights %s in LHE file", list(this_weights.keys()))
 
         n_events = self._check_sample_elements(this_observations, None)
@@ -754,7 +802,17 @@ class LHEReader:
             if key not in self.benchmark_names_phys:  # Only rescale nuisance benchmarks
                 this_weights[key] = reference_weights / sampling_weights * this_weights[key]
 
-        return this_observations, this_weights, n_events
+        # Rescale dense scale weights to reference benchmark too (same as nuisance benchmarks)
+        this_dense = OrderedDict()
+        for syst_name, ids in muf_to_wid_by_syst.items():
+            this_dense[syst_name] = OrderedDict()
+            for muf, wid in ids.items():
+                w = this_extra.get(wid)
+                if w is None:
+                    continue
+                this_dense[syst_name][muf] = reference_weights / sampling_weights * w
+
+        return this_observations, this_weights, n_events, this_dense
 
     def save(self, filename_out, shuffle=True):
         """
@@ -796,6 +854,28 @@ class LHEReader:
             copy_from_path=self.filename,
         )
 
+        # Check if any dense scale weights were collected
+        has_dense = any(
+            any(w is not None for w in muf_dict.values())
+            for muf_dict in self.dense_scale_weights.values()
+        )
+
+        # If we have dense weights and shuffle is requested, apply a single permutation to
+        # everything so that main events and dense weights stay aligned.
+        perm = None
+        if shuffle and has_dense:
+            n = next(iter(self.weights.values())).shape[0]
+            perm = np.random.permutation(n)
+            for k in self.observations:
+                self.observations[k] = self.observations[k][perm]
+            for k in self.weights:
+                self.weights[k] = self.weights[k][perm]
+            self.events_sampling_benchmark_ids = np.asarray(self.events_sampling_benchmark_ids)[perm]
+            for syst_name, muf_dict in self.dense_scale_weights.items():
+                for muf in list(muf_dict.keys()):
+                    if muf_dict[muf] is not None:
+                        muf_dict[muf] = muf_dict[muf][perm]
+
         # Save events
         save_events(
             file_name=filename_out,
@@ -808,5 +888,16 @@ class LHEReader:
             num_background_events=self.background_events,
         )
 
-        if shuffle:
+        # Save dense scale weights as a side group aligned with events
+        if has_dense:
+            import h5py
+            with h5py.File(filename_out, "a") as f:
+                grp = f.create_group("scale_weights_dense")
+                for syst_name, muf_dict in self.dense_scale_weights.items():
+                    sgrp = grp.create_group(syst_name)
+                    for muf, w in muf_dict.items():
+                        if w is not None:
+                            sgrp.create_dataset(f"muf_{muf}", data=w)
+
+        if shuffle and not has_dense:
             combine_and_shuffle([filename_out], filename_out)

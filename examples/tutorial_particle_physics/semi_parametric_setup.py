@@ -38,9 +38,10 @@ os.environ["LD_LIBRARY_PATH"] = (
 
 
 # ============================================================
-# BATCH CONFIGURATION - increment this for each independent run
+# BATCH CONFIGURATION
+# Read from env var (set by HTCondor run_semi_parametric_setup.sh) with a local default.
 # ============================================================
-BATCH_ID = 1
+BATCH_ID = int(os.environ.get("BATCH_ID", 1))
 
 # ============================================================
 # STAGING - large HDF5 outputs go here to avoid home quota limits
@@ -88,7 +89,7 @@ miner.add_parameter(
     parameter_name="CWL2",
     morphing_max_power=2,
     param_card_transform="16.52*theta",
-    parameter_range=(-20.0, 20.0),
+    parameter_range=(-7.0, 7.0),
 )
 miner.add_parameter(
     lha_block="dim6",
@@ -96,35 +97,34 @@ miner.add_parameter(
     parameter_name="CPWL2",
     morphing_max_power=2,
     param_card_transform="16.52*theta",
-    parameter_range=(-20.0, 20.0),
+    parameter_range=(-7.0, 7.0),
 )
 
 # Benchmarks
 miner.add_benchmark({"CWL2": 0.0, "CPWL2": 0.0}, "sm")
-miner.add_benchmark({"CWL2": 5.0, "CPWL2": 0.0}, "w")
-miner.add_benchmark({"CWL2": -5.0, "CPWL2": 0.0}, "neg_w")
-miner.add_benchmark({"CWL2": 0.0, "CPWL2": 5.0}, "ww")
-miner.add_benchmark({"CWL2": 0.0, "CPWL2": -5.0}, "neg_ww")
+miner.add_benchmark({"CWL2": 5.0, "CPWL2": 0.0}, "cwl_5_cpwl_0")
+miner.add_benchmark({"CWL2": -5.0, "CPWL2": 0.0}, "cwl_m5_cpwl_0")
+miner.add_benchmark({"CWL2": 0.0, "CPWL2": 5.0}, "cwl_0_cpwl_5")
+miner.add_benchmark({"CWL2": 0.0, "CPWL2": -5.0}, "cwl_0_cpwl_m5")
+miner.add_benchmark({"CWL2": 5.0, "CPWL2": -5.0}, "cwl_5_cpwl_m5")
 
-# Morphing (will add 1 extra basis point to complete the basis)
+# Morphing (all 6 basis points already defined → fully deterministic)
 miner.set_morphing(include_existing_benchmarks=True, max_overall_power=2)
 
 
 # ## 2. Add Systematics and Save Setup
 #
-# Dense muF variations for tree-level process (no muR dependence at LO)
-# plus PDF replica variations (100 NNPDF23 LO replicas).
-# MadGraph computes these independently (muF at central PDF, PDF at nominal muF).
-# Joint (muF, PDF_member) weights can be computed post-hoc using LHAPDF + parton x values.
+# Two nuisance parameters:
+#   - scale_muf: mu_F scale variation (tree-level, no muR dependence)
+#   - signal_norm: flat 10% signal normalization uncertainty
 #
-# NOTE: MadMiner's LHE parser currently only extracts the two extreme muF
-# points and collapses PDF to eigenvector pairs.  The full set of raw weights
-# is stored in the LHE file for custom extraction later.
+# PDF removed: 100 replicas blow up memory during LHE parsing and save.
+# Revisit once parser is chunked or PDF is reduced to a principal-component summary.
 
 # In[5]:
 
 
-# Dense muF grid — 11 points from 0.5x to 2x nominal
+# Dense muF grid — 11 points from 0.5x to 2x nominal (only extremes get extracted by MadMiner)
 miner.add_systematics(
     effect="scale",
     systematic_name="scale_muf",
@@ -132,11 +132,11 @@ miner.add_systematics(
     scale_variations=(0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0),
 )
 
-# PDF replica variations (uses error members of NNPDF23_lo_as_0130_qed, lhaid=247000)
+# Flat 10% signal normalization uncertainty (applied analytically, no MadGraph needed)
 miner.add_systematics(
-    effect="pdf",
-    systematic_name="pdf_variation",
-    pdf_variation="errorset",
+    effect="norm",
+    systematic_name="signal_norm",
+    norm_variation=1.10,
 )
 
 miner.save("data/setup_semi_parametric.h5")
@@ -152,13 +152,12 @@ miner.save("data/setup_semi_parametric.h5")
 # In[6]:
 
 
-all_systematics = ["scale_muf", "pdf_variation"]
+all_systematics = ["scale_muf", "signal_norm"]
 
-# Both systematics go to MadGraph: dense muF grid + PDF error set replicas.
-# These are computed independently (not joint); see note above.
-mg_systematics = ["scale_muf", "pdf_variation"]
+# Only scale_muf needs MadGraph; signal_norm is applied analytically.
+mg_systematics = ["scale_muf"]
 
-additional_benchmarks = ["w", "ww", "neg_w", "neg_ww"]
+additional_benchmarks = ["cwl_5_cpwl_0", "cwl_m5_cpwl_0", "cwl_0_cpwl_5", "cwl_0_cpwl_m5", "cwl_5_cpwl_m5"]
 all_benchmarks = ["sm"] + additional_benchmarks
 
 # Set to True to force regeneration even if LHE files already exist
@@ -468,6 +467,25 @@ with h5py.File(output_file, "w") as f:
     f.create_dataset("nuisance_parameter_names", data=np.array(list(da.nuisance_parameters.keys()), dtype="S256"))
     f.create_dataset("systematics_names", data=np.array(list(da.systematics.keys()), dtype="S256"))
     f.attrs["batch_id"] = BATCH_ID
+
+    # Dense scale weights — raw per-event muF variation weights.
+    # Apply the same sampling_factor that DataAnalyzer applies to benchmark weights
+    # (see DataAnalyzer._calculate_sampling_factors + load_events in hdf5.py):
+    # each event's weight is multiplied by n_events_generated_at_its_benchmark / n_total.
+    with h5py.File(path_to_saved_data, "r") as src:
+        if "scale_weights_dense" in src:
+            events_per_bm = np.asarray(da.n_events_generated_per_benchmark, dtype=np.float64)
+            sampling_factors = events_per_bm / events_per_bm.sum()
+            sampling_factors = np.hstack((sampling_factors, 1.0))  # background slot
+            per_event_factor = sampling_factors[sampling_ids]
+
+            dgrp = f.create_group("scale_weights_dense")
+            for syst_name in src["scale_weights_dense"]:
+                ssrc = src[f"scale_weights_dense/{syst_name}"]
+                sdst = dgrp.create_group(syst_name)
+                for key in ssrc:
+                    sdst.create_dataset(key, data=ssrc[key][()] * per_event_factor)
+            print(f"Included dense scale weights: {list(src['scale_weights_dense'].keys())}")
 
 print(f"Saved batch {BATCH_ID} to {output_file}")
 
